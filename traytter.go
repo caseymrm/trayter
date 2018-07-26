@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -17,43 +19,102 @@ import (
 // Tweet represents one tweeter
 type Tweet struct {
 	Text      string
-	Href      string
+	ID        string
+	Username  string
 	Timestamp time.Time
 }
 
-var lastFetched time.Time
-var lastTweets []Tweet
-
-func recentTweets(username string) ([]Tweet, error) {
-	var err error
-	if lastFetched.Before(time.Now().Add(-10 * time.Minute)) {
-		lastFetched = time.Now()
-		url := "https://twitter.com/" + username
-		log.Printf("Fetching %s", url)
-		resp, geterr := http.Get(url)
-		if geterr != nil {
-			return lastTweets, geterr
-		}
-		if err != nil {
-			return nil, err
-		}
-		lastTweets, err = parseTweets(resp.Body)
-	}
-	return lastTweets, nil
+// Href returns the URL for this tweet
+func (t *Tweet) Href() string {
+	return fmt.Sprintf("https://twitter.com/%s/status/%s", t.Username, t.ID)
 }
 
-func parseTweets(r io.Reader) ([]Tweet, error) {
+// Item returns a menu item for the tweet, trucated as required
+func (t *Tweet) Item(truncate int) menuet.MenuItem {
+	text := t.Text
+	if truncate > 0 && len(text) > truncate-2 {
+		text = fmt.Sprintf("%s...", t.Text[0:truncate-3])
+	}
+	return menuet.MenuItem{
+		Text:     text,
+		Key:      fmt.Sprintf("tweet:%s %s", t.Username, t.ID),
+		Children: text != t.Text,
+	}
+}
+
+var fetched time.Time
+var usernames []string
+var tweets map[string][]Tweet
+var tweetsOnce sync.Once
+
+func fetchAllTweets() (err error) {
+	tweetsOnce.Do(func() {
+		usernames = []string{"wirecutterdeals"}
+		tweets = make(map[string][]Tweet)
+	})
+	if fetched.After(time.Now().Add(-9 * time.Minute)) {
+		return fmt.Errorf("Called too frequently (%v > %v)", fetched, time.Now().Add(-9*time.Minute))
+	}
+	for ind, username := range usernames {
+		newUsername, err := fetchTweets(username)
+		if err != nil {
+			log.Printf("Error fetching %s: %v", username, err)
+			continue
+		}
+		usernames[ind] = newUsername
+	}
+	sort.Slice(usernames, func(i, j int) bool {
+		if len(tweets[usernames[j]]) == 0 {
+			if len(tweets[usernames[i]]) == 0 {
+				return usernames[j] < usernames[i]
+			}
+			// i exists, j does not, put i first
+			return true
+		} else if len(tweets[usernames[i]]) == 0 {
+			// j exists, i does not, put j first
+			return false
+		}
+		return tweets[usernames[j]][0].Timestamp.Before(tweets[usernames[i]][0].Timestamp)
+	})
+	return err
+}
+
+func fetchTweets(username string) (string, error) {
+	var err error
+	fetched = time.Now()
+	url := "https://twitter.com/" + username
+	log.Printf("Fetching %s", url)
+	resp, geterr := http.Get(url)
+	if geterr != nil {
+		return "", geterr
+	}
+	if err != nil {
+		return "", err
+	}
+	newTweets, newUsername, err := parseTweets(resp.Body)
+	log.Printf("Got %d tweets for %s", len(newTweets), newUsername)
+	tweets[newUsername] = newTweets
+	return newUsername, err
+}
+
+func parseTweets(r io.Reader) ([]Tweet, string, error) {
 	tweets := make([]Tweet, 0)
+	username := ""
 	doc, err := goquery.NewDocumentFromReader(r)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	doc.Find(".tweet").Each(func(i int, s *goquery.Selection) {
-		// For each item found, get the band and title
 		href, exists := s.Find("a.tweet-timestamp").Attr("href")
 		if !exists {
 			return
 		}
+		parts := strings.Split(href, "/")
+		if len(parts) != 4 {
+			return
+		}
+		username = parts[1]
+		id := parts[3]
 		timestamp, exists := s.Find("._timestamp").Attr("data-time")
 		if !exists {
 			log.Printf("No timestamp %s", href)
@@ -70,7 +131,8 @@ func parseTweets(r io.Reader) ([]Tweet, error) {
 			return
 		}
 		tweets = append(tweets, Tweet{
-			Href:      href,
+			ID:        id,
+			Username:  username,
 			Text:      s.Find(".tweet-text").Text(),
 			Timestamp: parsedTime,
 		})
@@ -78,57 +140,109 @@ func parseTweets(r io.Reader) ([]Tweet, error) {
 	sort.Slice(tweets, func(i, j int) bool {
 		return tweets[j].Timestamp.Before(tweets[i].Timestamp)
 	})
-	return tweets[0:10], nil
+	if len(tweets) > 10 {
+		tweets = tweets[0:10]
+	}
+	return tweets, username, nil
 }
 
 func checkTwitter() {
 	ticker := time.NewTicker(10 * time.Minute)
 	for ; true; <-ticker.C {
-		tweets, err := recentTweets("wirecutterdeals")
+		err := fetchAllTweets()
 		if err != nil {
 			log.Printf("Error: %v", err)
 			continue
 		}
 		title := "🐦"
-		if len(tweets) > 0 {
-			title = fmt.Sprintf("🐥 %s", tweets[0].Text[0:20])
+		if len(usernames) > 0 && len(tweets[usernames[0]]) > 0 {
+			title = fmt.Sprintf("🐥%s", tweets[usernames[0]][0].Text[0:20])
+
 		}
 		menuet.App().SetMenuState(&menuet.MenuState{
 			Title: title,
-			Items: menuItems(tweets),
 		})
 	}
 }
 
-func menuItems(tweets []Tweet) []menuet.MenuItem {
-	items := make([]menuet.MenuItem, 0, len(tweets))
-	for _, tweet := range tweets {
-		text := tweet.Text
-		if len(text) > 41 {
-			text = fmt.Sprintf("%s...", tweet.Text[0:40])
+func menuItems(key string) []menuet.MenuItem {
+	if key == "" {
+		items := make([]menuet.MenuItem, 0, 2*len(usernames))
+		for _, username := range usernames {
+			if len(tweets[username]) > 0 {
+				tweet := tweets[username][0]
+				items = append(items, tweet.Item(30))
+			}
+			items = append(items, menuet.MenuItem{
+				Text:     fmt.Sprintf("@%s", username),
+				Key:      fmt.Sprintf("username:%s", username),
+				Children: true,
+			})
+		}
+		return items
+	}
+	if strings.HasPrefix(key, "username:") {
+		var username string
+		fmt.Sscanf(key, "username:%s", &username)
+		recent := tweets[username]
+		items := make([]menuet.MenuItem, 0, len(recent))
+		if len(recent) == 0 {
+			items = append(items, menuet.MenuItem{
+				Text: "No tweets!",
+			})
+		} else {
+			items = append(items, menuet.MenuItem{
+				Text:     "Recent tweets",
+				FontSize: 9,
+			})
+			for _, tweet := range recent {
+				items = append(items, tweet.Item(30))
+			}
 		}
 		items = append(items, menuet.MenuItem{
-			Text:     text,
-			Callback: tweet.Href,
-			Children: []menuet.MenuItem{
-				menuet.MenuItem{
-					Text:     tweet.Text,
-					Callback: tweet.Href,
-				},
-			},
+			Type: menuet.Separator,
 		})
+		items = append(items, menuet.MenuItem{
+			Text: fmt.Sprintf("Remove @%s", username),
+			Key:  fmt.Sprintf("remove:%s", username),
+		})
+		return items
 	}
-	return items
-}
+	if strings.HasPrefix(key, "tweet:") {
+		var id string
+		var username string
+		fmt.Sscanf(key, "tweet:%s %s", &username, &id)
+		for _, tweet := range tweets[username] {
+			if tweet.ID == id {
+				return []menuet.MenuItem{
+					tweet.Item(0),
+				}
+			}
+		}
+		return []menuet.MenuItem{
+			{
+				Text: "Can't find tweet!",
+			},
+		}
 
-func handleClicks(callback chan string) {
-	for clicked := range callback {
-		go handleClick(clicked)
 	}
+
+	return nil
 }
 
 func handleClick(clicked string) {
-	exec.Command("open", "https://twitter.com"+clicked).Run()
+	if strings.HasPrefix(clicked, "tweet:") {
+		var href string
+		var username string
+		fmt.Sscanf(clicked, "tweet:%s %s", &username, &href)
+		exec.Command("open", "https://twitter.com"+href).Run()
+		return
+	}
+	if strings.HasPrefix(clicked, "remove:") {
+		var username string
+		fmt.Sscanf(clicked, "remove:%s %s", &username)
+		log.Printf("Remove %s", username)
+	}
 }
 
 func main() {
@@ -136,16 +250,7 @@ func main() {
 	app := menuet.App()
 	app.Name = "Traytter"
 	app.Label = "com.github.caseymrm.traytter"
-	clickChannel := make(chan string)
-	app.Clicked = clickChannel
-	app.MenuOpened = func() []menuet.MenuItem {
-		tweets, err := recentTweets("wirecutterdeals")
-		if err != nil {
-			log.Printf("Error: %v", err)
-			return nil
-		}
-		return menuItems(tweets)
-	}
-	go handleClicks(clickChannel)
+	app.Clicked = handleClick
+	app.MenuOpened = menuItems
 	app.RunApplication()
 }
