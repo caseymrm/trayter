@@ -35,11 +35,16 @@ func (t *Tweet) Item(truncate int) menuet.MenuItem {
 	if truncate > 0 && len(text) > truncate-2 {
 		text = fmt.Sprintf("%s...", t.Text[0:truncate-3])
 	}
-	return menuet.MenuItem{
-		Text:     text,
-		Key:      fmt.Sprintf("tweet:%s %s", t.Username, t.ID),
-		Children: text != t.Text,
+	item := menuet.MenuItem{
+		Text:       text,
+		FontWeight: menuet.WeightUltraLight,
+		Key:        fmt.Sprintf("tweet:%s %s", t.Username, t.ID),
+		Children:   text != t.Text,
 	}
+	if truncate == 0 {
+		item.FontSize = 9
+	}
+	return item
 }
 
 var fetched time.Time
@@ -179,6 +184,13 @@ func menuItems(key string) []menuet.MenuItem {
 				Children: true,
 			})
 		}
+		items = append(items, menuet.MenuItem{
+			Type: menuet.Separator,
+		})
+		items = append(items, menuet.MenuItem{
+			Text: "Add user",
+			Key:  "add",
+		})
 		return items
 	}
 	if strings.HasPrefix(key, "username:") {
@@ -196,7 +208,7 @@ func menuItems(key string) []menuet.MenuItem {
 				FontSize: 9,
 			})
 			for _, tweet := range recent {
-				items = append(items, tweet.Item(30))
+				items = append(items, tweet.Item(50))
 			}
 		}
 		items = append(items, menuet.MenuItem{
@@ -216,6 +228,12 @@ func menuItems(key string) []menuet.MenuItem {
 			if tweet.ID == id {
 				return []menuet.MenuItem{
 					tweet.Item(0),
+					{
+						Text:       tweet.Timestamp.Format("Mon Jan 2 15:04"),
+						FontSize:   9,
+						FontWeight: menuet.WeightUltraLight,
+						Key:        fmt.Sprintf("tweet:%s %s", tweet.Username, tweet.ID),
+					},
 				}
 			}
 		}
@@ -231,17 +249,22 @@ func menuItems(key string) []menuet.MenuItem {
 }
 
 func handleClick(clicked string) {
-	if strings.HasPrefix(clicked, "tweet:") {
-		var href string
-		var username string
-		fmt.Sscanf(clicked, "tweet:%s %s", &username, &href)
-		exec.Command("open", "https://twitter.com"+href).Run()
+	if clicked == "add" {
+		log.Printf("Add")
 		return
 	}
 	if strings.HasPrefix(clicked, "remove:") {
 		var username string
 		fmt.Sscanf(clicked, "remove:%s %s", &username)
 		log.Printf("Remove %s", username)
+		return
+	}
+	if strings.HasPrefix(clicked, "tweet:") {
+		var href string
+		var username string
+		fmt.Sscanf(clicked, "tweet:%s %s", &username, &href)
+		exec.Command("open", "https://twitter.com"+href).Run()
+		return
 	}
 }
 
