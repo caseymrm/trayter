@@ -29,22 +29,65 @@ func (t *Tweet) Href() string {
 	return fmt.Sprintf("https://twitter.com/%s/status/%s", t.Username, t.ID)
 }
 
-// Item returns a menu item for the tweet, trucated as required
+// Key is the key for this tweet
+func (t *Tweet) Key() string {
+	return fmt.Sprintf("tweet:%s %s", t.Username, t.ID)
+}
+
+// Item returns a short menu item for the tweet, trucated as requested
 func (t *Tweet) Item(truncate int) menuet.MenuItem {
 	text := t.Text
-	if truncate > 0 && len(text) > truncate-2 {
+	if len(text) > truncate-2 {
 		text = fmt.Sprintf("%s...", t.Text[0:truncate-3])
 	}
 	item := menuet.MenuItem{
 		Text:       text,
 		FontWeight: menuet.WeightUltraLight,
-		Key:        fmt.Sprintf("tweet:%s %s", t.Username, t.ID),
+		Key:        t.Key(),
 		Children:   text != t.Text,
 	}
-	if truncate == 0 {
-		item.FontSize = 9
-	}
 	return item
+}
+
+// FullItems returns several menu items for the tweet
+func (t *Tweet) FullItems() []menuet.MenuItem {
+	lines := wrap(t.Text, 52)
+	items := make([]menuet.MenuItem, 0, len(lines)+1)
+	items = append(items, menuet.MenuItem{
+		Text:       fmt.Sprintf("@%s - %s", t.Username, t.Timestamp.Format("Mon Jan 2 3:04pm")),
+		Key:        t.Key(),
+		FontWeight: menuet.WeightBold,
+	})
+	for _, line := range lines {
+		items = append(items, menuet.MenuItem{
+			Text:       line,
+			Key:        t.Key(),
+			FontWeight: menuet.WeightUltraLight,
+		})
+	}
+	return items
+}
+
+func wrap(text string, width int) []string {
+	lines := make([]string, 0, len(text)/width)
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return lines
+	}
+	current := words[0]
+	remaining := width - len(current)
+	for _, word := range words[1:] {
+		if len(word)+1 > remaining {
+			lines = append(lines, current)
+			current = word
+			remaining = width - len(word)
+		} else {
+			current += " " + word
+			remaining -= 1 + len(word)
+		}
+	}
+	lines = append(lines, current)
+	return lines
 }
 
 var fetched time.Time
@@ -188,8 +231,8 @@ func menuItems(key string) []menuet.MenuItem {
 			Type: menuet.Separator,
 		})
 		items = append(items, menuet.MenuItem{
-			Text: "Add user",
-			Key:  "add",
+			Text: "Follow a user",
+			Key:  "follow",
 		})
 		return items
 	}
@@ -226,15 +269,7 @@ func menuItems(key string) []menuet.MenuItem {
 		fmt.Sscanf(key, "tweet:%s %s", &username, &id)
 		for _, tweet := range tweets[username] {
 			if tweet.ID == id {
-				return []menuet.MenuItem{
-					tweet.Item(0),
-					{
-						Text:       tweet.Timestamp.Format("Mon Jan 2 15:04"),
-						FontSize:   9,
-						FontWeight: menuet.WeightUltraLight,
-						Key:        fmt.Sprintf("tweet:%s %s", tweet.Username, tweet.ID),
-					},
-				}
+				return tweet.FullItems()
 			}
 		}
 		return []menuet.MenuItem{
@@ -249,8 +284,8 @@ func menuItems(key string) []menuet.MenuItem {
 }
 
 func handleClick(clicked string) {
-	if clicked == "add" {
-		log.Printf("Add")
+	if clicked == "follow" {
+		log.Printf("Follow")
 		return
 	}
 	if strings.HasPrefix(clicked, "remove:") {
@@ -260,10 +295,14 @@ func handleClick(clicked string) {
 		return
 	}
 	if strings.HasPrefix(clicked, "tweet:") {
-		var href string
+		var id string
 		var username string
-		fmt.Sscanf(clicked, "tweet:%s %s", &username, &href)
-		exec.Command("open", "https://twitter.com"+href).Run()
+		fmt.Sscanf(clicked, "tweet:%s %s", &username, &id)
+		tweet := Tweet{
+			ID:       id,
+			Username: username,
+		}
+		exec.Command("open", tweet.Href()).Run()
 		return
 	}
 }
