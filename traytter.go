@@ -97,14 +97,15 @@ var tweetsOnce sync.Once
 
 func fetchAllTweets() (err error) {
 	tweetsOnce.Do(func() {
-		usernames = []string{"wirecutterdeals"}
+		menuet.Defaults().Unmarshal("usernames", &usernames)
 		tweets = make(map[string][]Tweet)
 	})
 	if fetched.After(time.Now().Add(-9 * time.Minute)) {
 		return fmt.Errorf("Called too frequently (%v > %v)", fetched, time.Now().Add(-9*time.Minute))
 	}
 	for ind, username := range usernames {
-		newUsername, err := fetchTweets(username)
+		newUsername, newTweets, err := fetchTweets(username)
+		tweets[newUsername] = newTweets
 		if err != nil {
 			log.Printf("Error fetching %s: %v", username, err)
 			continue
@@ -127,22 +128,21 @@ func fetchAllTweets() (err error) {
 	return err
 }
 
-func fetchTweets(username string) (string, error) {
+func fetchTweets(username string) (string, []Tweet, error) {
 	var err error
 	fetched = time.Now()
 	url := "https://twitter.com/" + username
 	log.Printf("Fetching %s", url)
 	resp, geterr := http.Get(url)
 	if geterr != nil {
-		return "", geterr
+		return "", nil, geterr
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	newTweets, newUsername, err := parseTweets(resp.Body)
 	log.Printf("Got %d tweets for %s", len(newTweets), newUsername)
-	tweets[newUsername] = newTweets
-	return newUsername, err
+	return newUsername, newTweets, err
 }
 
 func parseTweets(r io.Reader) ([]Tweet, string, error) {
@@ -202,14 +202,52 @@ func checkTwitter() {
 			log.Printf("Error: %v", err)
 			continue
 		}
-		title := "🐦"
-		if len(usernames) > 0 && len(tweets[usernames[0]]) > 0 {
-			title = fmt.Sprintf("🐥%s", tweets[usernames[0]][0].Text[0:20])
+		setTitle()
+	}
+}
 
+func setTitle() {
+	title := "🐦"
+	if len(usernames) > 0 && len(tweets[usernames[0]]) > 0 {
+		title = fmt.Sprintf("🐥%s", tweets[usernames[0]][0].Text[0:20])
+
+	}
+	menuet.App().SetMenuState(&menuet.MenuState{
+		Title: title,
+	})
+
+}
+
+func follow(username string) {
+	username = strings.Trim(username, "@ ")
+	for _, name := range usernames {
+		if strings.EqualFold(name, username) {
+			return
 		}
-		menuet.App().SetMenuState(&menuet.MenuState{
-			Title: title,
+	}
+	newUsername, newTweets, err := fetchTweets(username)
+	if err != nil {
+		menuet.App().Alert(menuet.Alert{
+			MessageText:     fmt.Sprintf("Could not fetch %s", username),
+			InformativeText: err.Error(),
 		})
+		return
+	}
+	tweets[newUsername] = newTweets
+	setTitle()
+	usernames = append(usernames, newUsername)
+	menuet.Defaults().Marshal("usernames", usernames)
+}
+
+func remove(username string) {
+	for ind, name := range usernames {
+		if name == username {
+			usernames = append(usernames[:ind], usernames[ind+1:]...)
+			delete(tweets, username)
+			setTitle()
+			menuet.Defaults().Marshal("usernames", usernames)
+			return
+		}
 	}
 }
 
@@ -285,13 +323,21 @@ func menuItems(key string) []menuet.MenuItem {
 
 func handleClick(clicked string) {
 	if clicked == "follow" {
-		log.Printf("Follow")
+		response := menuet.App().Alert(menuet.Alert{
+			MessageText: "What Twitter user would you like to follow?",
+			Inputs:      []string{"@username"},
+			Buttons:     []string{"Follow", "Cancel"},
+		})
+		if response.Button == 0 && len(response.Inputs) == 1 && response.Inputs[0] != "" {
+			follow(response.Inputs[0])
+		}
+
 		return
 	}
 	if strings.HasPrefix(clicked, "remove:") {
 		var username string
 		fmt.Sscanf(clicked, "remove:%s %s", &username)
-		log.Printf("Remove %s", username)
+		remove(username)
 		return
 	}
 	if strings.HasPrefix(clicked, "tweet:") {
