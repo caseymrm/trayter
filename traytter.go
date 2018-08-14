@@ -17,6 +17,7 @@ type Tweet struct {
 	Username  string
 	Author    string
 	Timestamp time.Time
+	AvatarURL string
 }
 
 func (t *Tweet) href() string {
@@ -105,11 +106,15 @@ func checkTwitter() {
 
 func setTitle() {
 	title := "🐦"
+	avatar := ""
 	if len(usernames) > 0 && len(tweets[usernames[0]]) > 0 {
-		title += getKeyword(tweets[usernames[0]][0].Text)
+		tweet := tweets[usernames[0]][0]
+		avatar = tweet.AvatarURL
+		title = getKeyword(tweet.Text)
 	}
 	menuet.App().SetMenuState(&menuet.MenuState{
 		Title: title,
+		Image: avatar,
 	})
 
 }

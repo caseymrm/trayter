@@ -104,13 +104,18 @@ func parseTweets(username string, r io.Reader) ([]Tweet, string, error) {
 			log.Printf("Bad timestamp %s: %v", timestamp, err)
 			return
 		}
-		tweets = append(tweets, Tweet{
+		tweet := Tweet{
 			ID:        id,
 			Username:  newUsername,
 			Author:    author,
 			Text:      s.Find(".tweet-text").Text(),
 			Timestamp: parsedTime,
-		})
+		}
+		avatar, exists := s.Find("img.avatar").Attr("src")
+		if exists {
+			tweet.AvatarURL = avatar
+		}
+		tweets = append(tweets, tweet)
 	})
 	sort.Slice(tweets, func(i, j int) bool {
 		return tweets[j].Timestamp.Before(tweets[i].Timestamp)
