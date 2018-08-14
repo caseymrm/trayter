@@ -223,5 +223,7 @@ func main() {
 	app.Name = "Traytter"
 	app.Label = "com.github.caseymrm.traytter"
 	app.Children = menuItems
+	app.AutoUpdate.Version = "v0.1"
+	app.AutoUpdate.Repo = "caseymrm/traytter"
 	app.RunApplication()
 }
