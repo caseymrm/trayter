@@ -38,6 +38,7 @@ func (t *Tweet) Item(truncate int) menuet.MenuItem {
 		Text:       text,
 		FontWeight: menuet.WeightUltraLight,
 		Clicked:    t.open,
+		Image:      t.AvatarURL,
 	}
 	if text != t.Text {
 		item.Children = func() []menuet.MenuItem {
@@ -55,6 +56,7 @@ func (t *Tweet) FullItems() []menuet.MenuItem {
 		Text:       fmt.Sprintf("@%s - %s", t.Username, t.Timestamp.Format("Mon Jan 2 3:04pm")),
 		Clicked:    t.open,
 		FontWeight: menuet.WeightBold,
+		Image:      t.AvatarURL,
 	})
 	for _, line := range lines {
 		items = append(items, menuet.MenuItem{
@@ -164,6 +166,7 @@ func menuItems() []menuet.MenuItem {
 				Children: func() []menuet.MenuItem {
 					return usernameItems(username)
 				},
+				Image: tweet.AvatarURL,
 			})
 		} else {
 			items = append(items, menuet.MenuItem{
