@@ -9,3 +9,6 @@ Minimalist Twitter client for the OSX menu bar
 * Run it
 * To run every time you login, select "start at login" from the menu bar
 
+## Screenshot
+
+![Output](https://github.com/caseymrm/traytter/raw/master/traytter.png)
